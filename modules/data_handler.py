@@ -204,21 +204,13 @@ class DataHandler:
         return talib.ATR(np.array(highs), np.array(lows), np.array(closes), period)[-1]
 
     def volume_analysis(self, symbol):
-        """Улучшенный анализ объема с адаптивным окном"""
         current_volume = self.get_current_volume(symbol)
-        historical_volumes = self.get_historical_volumes(symbol, period=30)
-        
-        # Адаптивное окно на основе волатильности
-        volatility_factor = self.get_normalized_atr(symbol) / 3.0
-        period = max(15, min(30, int(25 - volatility_factor * 5)))
-        
-        if len(historical_volumes) < period:
-            return False
-            
-        avg_volume = talib.SMA(np.array(historical_volumes[-period:]), period)[-1]
-        ratio = current_volume / avg_volume if avg_volume > 0 else 0
-        
-        return ratio > self.calculate_dynamic_volume_threshold(symbol)
+        historical_volumes = self.get_historical_volumes(symbol)
+        avg_volume = talib.SMA(np.array(historical_volumes), 20)[-1]
+        ratio = current_volume / avg_volume
+        volatility_factor = self.calculate_atr(symbol) / 0.03
+        threshold = 1.8 + (0.5 * volatility_factor)
+        return ratio > threshold
 
     def liquidity_monitor(self, symbol):
         order_book = self.exchange.fetch_order_book(symbol)
@@ -257,12 +249,11 @@ class DataHandler:
         
         # Адаптивные пороги
         daily_volume = self.get_24h_volume(symbol)
-        levels = 10 if daily_volume > 1_000_000 else 5  # Для ликвидных пар больше уровней
         wall_threshold = max(100000, daily_volume * 0.0002)  # 0.02% от объема
         cluster_threshold = wall_threshold * 0.5
         
         # Поиск стен
-        def detect_walls(side, levels=levels):
+        def detect_walls(side, levels=10):
             for i in range(levels):
                 price, qty = ob[side][i]
                 value = qty * price
@@ -273,7 +264,7 @@ class DataHandler:
             return False
         
         # Поиск кластеров
-        def detect_clusters(side, levels=levels):
+        def detect_clusters(side, levels=5):
             cluster_found = False
             for i in range(levels):
                 price, qty = ob[side][i]
@@ -323,65 +314,6 @@ class DataHandler:
             return ticker.get('quoteVolume', 0)
         except Exception:
             return 0
-
-    def calculate_dynamic_atr_threshold(self, symbol):
-        """Рассчитывает динамический порог ATR на основе исторической волатильности"""
-        if symbol not in self.ohlcv or len(self.ohlcv[symbol]) < 50:
-            return 0.03  # Значение по умолчанию
-        
-        df = self.ohlcv[symbol]
-        
-        # Расчет исторической волатильности
-        atr_values = df['atr'].dropna()
-        if len(atr_values) < 20:
-            return 0.03
-            
-        mean_atr = atr_values.mean()
-        std_atr = atr_values.std()
-        
-        # Адаптивный порог (базовое значение + поправка на волатильность)
-        base_threshold = 0.025 if 'USDT' in symbol else 0.04
-        volatility_factor = (std_atr / mean_atr) if mean_atr > 0 else 1.0
-        return min(max(base_threshold, base_threshold * volatility_factor * 1.2), 0.06)
-    
-    def get_normalized_atr(self, symbol):
-        """Возвращает ATR в % от текущей цены"""
-        if symbol in self.indicators:
-            ind = self.indicators[symbol]
-            return (ind['atr'] / ind['close']) * 100
-        return 0
-    
-    def calculate_dynamic_volume_threshold(self, symbol):
-        """Рассчитывает динамический порог для объема"""
-        normalized_atr = self.get_normalized_atr(symbol)
-        
-        # Базовый порог в зависимости от типа монеты
-        base_threshold = 1.8 if symbol in ['BTC/USDT', 'ETH/USDT'] else 2.2
-        
-        # Корректировка на волатильность
-        volatility_factor = normalized_atr / 3.0  # Нормализация к 3%
-        return base_threshold * max(0.8, min(1.5, 1.0 + (volatility_factor - 1) * 0.2))
-    
-    def auto_calibrate_parameters(self):
-        """Автоматическая калибровка параметров стратегии"""
-        total_atr = 0
-        count = 0
-        
-        for symbol in self.ohlcv:
-            if len(self.ohlcv[symbol]) > 100:
-                total_atr += self.get_normalized_atr(symbol)
-                count += 1
-                
-        if count > 0:
-            market_volatility = total_atr / count
-            
-            # Динамическое обновление параметров
-            Config.ATR_THRESHOLD = max(0.025, min(0.045, market_volatility * 0.75 / 100))
-            Config.VOLUME_RATIO = max(1.8, min(2.3, 2.0 - (market_volatility - 3) * 0.05))
-            
-            print(f"[Calibration] Updated params: "
-                f"ATR_THRESHOLD={Config.ATR_THRESHOLD:.4f}, "
-                f"VOLUME_RATIO={Config.VOLUME_RATIO:.2f}")
 
     def optimize_parameters(self):
         """Оптимизация порогов анализа на основе истории (пример)"""
