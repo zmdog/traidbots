@@ -21,9 +21,16 @@ class ScalpingBot:
     def run(self):
         """Основной цикл работы бота"""
         print("[ScalpingBot] Ожидание инициализации данных (15 секунд)...")
+        calibration_counter = 0
         time.sleep(15)  # Дать время на запуск WebSocket и получение первых данных
         while True:
             try:
+                # Перекалибровка каждые 30 минут
+                calibration_counter += 1
+                if calibration_counter >= 360:  # 30 мин * 12 итераций (при 5-сек интервале)
+                    self.data_handler.auto_calibrate_parameters()
+                    calibration_counter = 0
+                    
                 print("=== Обновление данных ===")
                 self.update_data()
                 
